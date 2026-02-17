@@ -149,12 +149,16 @@ jobs:
           KEYCHAIN_PASSWORD="$(uuidgen)"
           CERT_PATH="${RUNNER_TEMP}/developer_id.p12"
 
-          (printf "%s" "${CODESIGN_CERT_P12}" | base64 --decode > "${CERT_PATH}") || (printf "%s" "${CODESIGN_CERT_P12}" | base64 -D > "${CERT_PATH}")
+          printf "%s" "${CODESIGN_CERT_P12}" | openssl base64 -d -A -out "${CERT_PATH}"
+          if [[ ! -s "${CERT_PATH}" ]]; then
+            echo "Decoded certificate is empty."
+            exit 1
+          fi
 
           security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
           security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
           security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
-          security import "${CERT_PATH}" -k "${KEYCHAIN_PATH}" -P "${CODESIGN_CERT_PASSWORD}" -T /usr/bin/codesign -T /usr/bin/security
+          security import "${CERT_PATH}" -f pkcs12 -k "${KEYCHAIN_PATH}" -P "${CODESIGN_CERT_PASSWORD}" -T /usr/bin/codesign -T /usr/bin/security
           security list-keychains -d user -s "${KEYCHAIN_PATH}" login.keychain-db
           security set-key-partition-list -S apple-tool:,apple: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
 
