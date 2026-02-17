@@ -124,16 +124,24 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ -n "${CODESIGN_IDENTITY}" && -n "${CODESIGN_CERT_P12}" && -n "${CODESIGN_CERT_PASSWORD}" && -n "${NOTARIZE_APPLE_ID}" && -n "${NOTARIZE_TEAM_ID}" && -n "${NOTARIZE_APP_PASSWORD}" ]]; then
-            echo "enabled=true" >> "${GITHUB_OUTPUT}"
-            echo "Signing and notarization are enabled."
+          if [[ -n "${CODESIGN_IDENTITY}" && -n "${CODESIGN_CERT_P12}" && -n "${CODESIGN_CERT_PASSWORD}" ]]; then
+            echo "sign_enabled=true" >> "${GITHUB_OUTPUT}"
+            echo "Code signing is enabled."
           else
-            echo "enabled=false" >> "${GITHUB_OUTPUT}"
-            echo "::warning::Missing signing/notarization secrets. Release will be unsigned and may be blocked by Gatekeeper."
+            echo "sign_enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::Missing code-signing secrets. Release will be unsigned and may be blocked by Gatekeeper."
+          fi
+
+          if [[ -n "${NOTARIZE_APPLE_ID}" && -n "${NOTARIZE_TEAM_ID}" && -n "${NOTARIZE_APP_PASSWORD}" ]]; then
+            echo "notarize_enabled=true" >> "${GITHUB_OUTPUT}"
+            echo "Notarization is enabled."
+          else
+            echo "notarize_enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::Missing notarization secrets. Release will be signed (if available) but not notarized."
           fi
 
       - name: Import Developer ID certificate
-        if: steps.signing.outputs.enabled == 'true'
+        if: steps.signing.outputs.sign_enabled == 'true'
         run: |
           set -euo pipefail
 
@@ -151,7 +159,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
 
       - name: Code sign app bundle
-        if: steps.signing.outputs.enabled == 'true'
+        if: steps.signing.outputs.sign_enabled == 'true'
         run: |
           set -euo pipefail
 
@@ -160,7 +168,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}"
 
       - name: Notarize app bundle
-        if: steps.signing.outputs.enabled == 'true'
+        if: steps.signing.outputs.sign_enabled == 'true' && steps.signing.outputs.notarize_enabled == 'true'
         run: |
           set -euo pipefail
 
