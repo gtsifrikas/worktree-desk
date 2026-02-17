@@ -17,6 +17,19 @@ Native macOS SwiftUI app for managing Git worktrees.
 swift run WorktreeDesk
 ```
 
+## Export As App
+Build and install a standalone app bundle to `/Applications`:
+
+```bash
+./scripts/export_app.sh
+```
+
+Optional custom install path:
+
+```bash
+./scripts/export_app.sh "$HOME/Applications/WorktreeDesk.app"
+```
+
 ## Notes on sandboxed distribution
 - Security-scoped bookmarks are used for selected repositories.
 - Additional bookmarks can be granted for worktree folders outside the original repo path.
