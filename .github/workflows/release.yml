@@ -1,0 +1,126 @@
+name: Release macOS App
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Ensure icon scripts are executable
+        run: chmod +x scripts/build_app_icon.sh scripts/generate_app_icon.swift
+
+      - name: Build release binary
+        run: swift build -c release
+
+      - name: Build app icon
+        run: ./scripts/build_app_icon.sh
+
+      - name: Package app bundle
+        id: package
+        run: |
+          set -euo pipefail
+
+          APP_NAME="WorktreeDesk"
+          BUNDLE_ID="com.gtsifrikas.worktreedesk"
+          VERSION="0.1.${GITHUB_RUN_NUMBER}"
+          DIST_DIR="${RUNNER_TEMP}/dist"
+          APP_BUNDLE="${DIST_DIR}/${APP_NAME}.app"
+          ZIP_PATH="${DIST_DIR}/${APP_NAME}-macOS.zip"
+          SHA_PATH="${DIST_DIR}/${APP_NAME}-macOS.zip.sha256"
+
+          mkdir -p "${APP_BUNDLE}/Contents/MacOS"
+          mkdir -p "${APP_BUNDLE}/Contents/Resources"
+
+          BINARY_PATH=""
+          for candidate in \
+            ".build/arm64-apple-macosx/release/${APP_NAME}" \
+            ".build/x86_64-apple-macosx/release/${APP_NAME}"; do
+            if [[ -x "${candidate}" ]]; then
+              BINARY_PATH="${candidate}"
+              break
+            fi
+          done
+
+          if [[ -z "${BINARY_PATH}" ]]; then
+            BINARY_PATH="$(find .build -type f -path "*/release/${APP_NAME}" -print -quit)"
+          fi
+
+          if [[ -z "${BINARY_PATH}" || ! -x "${BINARY_PATH}" ]]; then
+            echo "Could not locate release binary for ${APP_NAME}."
+            exit 1
+          fi
+
+          cp "${BINARY_PATH}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
+          chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
+          cp "assets/AppIcon.icns" "${APP_BUNDLE}/Contents/Resources/AppIcon.icns"
+
+          cat > "${APP_BUNDLE}/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleExecutable</key>
+            <string>${APP_NAME}</string>
+            <key>CFBundleIconFile</key>
+            <string>AppIcon</string>
+            <key>CFBundleIdentifier</key>
+            <string>${BUNDLE_ID}</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>${APP_NAME}</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${VERSION}</string>
+            <key>CFBundleVersion</key>
+            <string>${VERSION}</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>14.0</string>
+            <key>NSPrincipalClass</key>
+            <string>NSApplication</string>
+          </dict>
+          </plist>
+          PLIST
+
+          ditto -c -k --sequesterRsrc --keepParent "${APP_BUNDLE}" "${ZIP_PATH}"
+          shasum -a 256 "${ZIP_PATH}" > "${SHA_PATH}"
+
+          printf "zip_path=%s\n" "${ZIP_PATH}" >> "${GITHUB_OUTPUT}"
+          printf "sha_path=%s\n" "${SHA_PATH}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build release metadata
+        id: meta
+        run: |
+          TAG="main-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
+          NAME="WorktreeDesk ${TAG}"
+          printf "tag=%s\n" "${TAG}" >> "${GITHUB_OUTPUT}"
+          printf "name=%s\n" "${NAME}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.package.outputs.zip_path }}
+            ${{ steps.package.outputs.sha_path }}
