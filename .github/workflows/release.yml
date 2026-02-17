@@ -15,12 +15,6 @@ jobs:
     env:
       APP_NAME: WorktreeDesk
       BUNDLE_ID: com.gtsifrikas.worktreedesk
-      CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
-      CODESIGN_CERT_P12: ${{ secrets.MACOS_CODESIGN_CERT_P12 }}
-      CODESIGN_CERT_PASSWORD: ${{ secrets.MACOS_CODESIGN_CERT_P12_PASSWORD }}
-      NOTARIZE_APPLE_ID: ${{ secrets.MACOS_NOTARIZE_APPLE_ID }}
-      NOTARIZE_TEAM_ID: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
-      NOTARIZE_APP_PASSWORD: ${{ secrets.MACOS_NOTARIZE_APP_PASSWORD }}
 
     steps:
       - name: Checkout
@@ -121,11 +115,15 @@ jobs:
 
       - name: Detect signing configuration
         id: signing
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          CODESIGN_CERT_P12: ${{ secrets.MACOS_CODESIGN_CERT_P12 }}
+          CODESIGN_CERT_PASSWORD: ${{ secrets.MACOS_CODESIGN_CERT_P12_PASSWORD }}
+          NOTARIZE_APPLE_ID: ${{ secrets.MACOS_NOTARIZE_APPLE_ID }}
+          NOTARIZE_TEAM_ID: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
+          NOTARIZE_APP_PASSWORD: ${{ secrets.MACOS_NOTARIZE_APP_PASSWORD }}
         run: |
           set -euo pipefail
-
-          echo "CODESIGN_CERT_P12 length: ${#CODESIGN_CERT_P12}"
-          echo "CODESIGN_CERT_PASSWORD length: ${#CODESIGN_CERT_PASSWORD}"
 
           if [[ -n "${CODESIGN_IDENTITY}" && -n "${CODESIGN_CERT_P12}" && -n "${CODESIGN_CERT_PASSWORD}" ]]; then
             echo "sign_enabled=true" >> "${GITHUB_OUTPUT}"
@@ -145,6 +143,9 @@ jobs:
 
       - name: Import Developer ID certificate
         if: steps.signing.outputs.sign_enabled == 'true'
+        env:
+          CODESIGN_CERT_P12: ${{ secrets.MACOS_CODESIGN_CERT_P12 }}
+          CODESIGN_CERT_PASSWORD: ${{ secrets.MACOS_CODESIGN_CERT_P12_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -173,6 +174,8 @@ jobs:
 
       - name: Code sign app bundle
         if: steps.signing.outputs.sign_enabled == 'true'
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
         run: |
           set -euo pipefail
 
@@ -182,6 +185,10 @@ jobs:
 
       - name: Notarize app bundle
         if: steps.signing.outputs.sign_enabled == 'true' && steps.signing.outputs.notarize_enabled == 'true'
+        env:
+          NOTARIZE_APPLE_ID: ${{ secrets.MACOS_NOTARIZE_APPLE_ID }}
+          NOTARIZE_TEAM_ID: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
+          NOTARIZE_APP_PASSWORD: ${{ secrets.MACOS_NOTARIZE_APP_PASSWORD }}
         run: |
           set -euo pipefail
 
