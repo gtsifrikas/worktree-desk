@@ -533,81 +533,179 @@ private struct CreateWorktreeSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Create Worktree")
-                .font(.title3)
+            HStack(spacing: 10) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.title3)
+                    .foregroundStyle(Color.accentColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Create Worktree")
+                        .font(.title3)
+                    Text("Pick source, destination, and create.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let createErrorMessage = viewModel.createErrorMessage {
+                Label(createErrorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Form {
-                Picker("Mode", selection: $viewModel.createRequest.mode) {
-                    ForEach(CreateMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
+                Section("1. Source") {
+                    Picker("Mode", selection: $viewModel.createRequest.mode) {
+                        ForEach(CreateMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
                     }
-                }
+                    .pickerStyle(.segmented)
 
-                TextField("Worktree name", text: $viewModel.createRequest.worktreeName)
+                    if viewModel.createRequest.mode == .existingBranch {
+                        TextField("Branch", text: $viewModel.createRequest.branchOrReference)
+                        SuggestionStrip(
+                            suggestions: viewModel.filteredCreateBranchSuggestions,
+                            onSelect: { viewModel.applyCreateBranchSuggestion($0) }
+                        )
+                    }
 
-                LabeledContent("Destination folder") {
-                    HStack(spacing: 8) {
-                        Text(viewModel.createRequest.destinationFolderPath.isEmpty ? "No folder selected" : viewModel.createRequest.destinationFolderPath)
-                            .foregroundStyle(viewModel.createRequest.destinationFolderPath.isEmpty ? .secondary : .primary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                    if viewModel.createRequest.mode == .newBranch {
+                        TextField("New branch", text: $viewModel.createRequest.branchOrReference)
+                        TextField("Start point", text: $viewModel.createRequest.startPoint)
+                        SuggestionStrip(
+                            suggestions: viewModel.filteredCreateStartPointSuggestions,
+                            onSelect: { viewModel.applyCreateStartPointSuggestion($0) }
+                        )
+                    }
 
-                        Button("Choose…") {
-                            viewModel.chooseCreateDestinationFolder()
+                    if viewModel.createRequest.mode == .detached {
+                        TextField("Start point", text: $viewModel.createRequest.startPoint)
+                        SuggestionStrip(
+                            suggestions: viewModel.filteredCreateStartPointSuggestions,
+                            onSelect: { viewModel.applyCreateStartPointSuggestion($0) }
+                        )
+                    }
+
+                    if viewModel.createSuggestionsLoading {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Loading branches and references…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
 
-                LabeledContent("Will create at") {
+                Section("2. Destination") {
+                    TextField("Worktree name", text: $viewModel.createRequest.worktreeName)
+
+                    LabeledContent("Destination folder") {
+                        HStack(spacing: 8) {
+                            Text(viewModel.createRequest.destinationFolderPath.isEmpty ? "No folder selected" : viewModel.createRequest.destinationFolderPath)
+                                .foregroundStyle(viewModel.createRequest.destinationFolderPath.isEmpty ? .secondary : .primary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+
+                            Button("Choose…") {
+                                viewModel.chooseCreateDestinationFolder()
+                            }
+                        }
+                    }
+                }
+
+                Section("3. Preview") {
                     Text(viewModel.createDestinationPreview)
+                        .font(.callout.monospaced())
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
-
-                if viewModel.createRequest.mode == .existingBranch {
-                    TextField("Branch", text: $viewModel.createRequest.branchOrReference)
-                }
-
-                if viewModel.createRequest.mode == .newBranch {
-                    TextField("New branch", text: $viewModel.createRequest.branchOrReference)
-                    TextField("Start point", text: $viewModel.createRequest.startPoint)
-                }
-
-                if viewModel.createRequest.mode == .detached {
-                    TextField("Start point", text: $viewModel.createRequest.startPoint)
-                }
             }
             .formStyle(.grouped)
+            .disabled(viewModel.isCreatingWorktree)
             .onChange(of: viewModel.createRequest.mode) { _, _ in
+                viewModel.clearCreateError()
                 if viewModel.createRequest.worktreeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     viewModel.autofillCreateDefaults()
                 }
             }
             .onChange(of: viewModel.createRequest.branchOrReference) { _, _ in
+                viewModel.clearCreateError()
                 if viewModel.createRequest.worktreeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     viewModel.autofillCreateDefaults()
                 }
             }
+            .onChange(of: viewModel.createRequest.startPoint) { _, _ in
+                viewModel.clearCreateError()
+            }
+            .onChange(of: viewModel.createRequest.worktreeName) { _, _ in
+                viewModel.clearCreateError()
+            }
+            .onChange(of: viewModel.createRequest.destinationFolderPath) { _, _ in
+                viewModel.clearCreateError()
+            }
 
             HStack {
                 Spacer()
-                Button("Autofill") {
-                    viewModel.autofillCreateDefaults()
-                }
+
                 Button("Cancel") {
                     viewModel.showingCreateSheet = false
                 }
-                Button("Create") {
+                .disabled(viewModel.isCreatingWorktree)
+
+                Button {
                     Task {
                         await viewModel.createWorktree()
                     }
+                } label: {
+                    if viewModel.isCreatingWorktree {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Creating…")
+                        }
+                        .frame(minWidth: 108)
+                    } else {
+                        Text("Create")
+                            .frame(minWidth: 108)
+                    }
                 }
+                .buttonStyle(.borderedProminent)
+                .disabled(!viewModel.canCreateWorktree || viewModel.isCreatingWorktree)
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)
-        .frame(width: 620, height: 400)
+        .frame(width: 680, height: 460)
+    }
+}
+
+private struct SuggestionStrip: View {
+    let suggestions: [String]
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        if suggestions.isEmpty {
+            EmptyView()
+        } else {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Array(suggestions.prefix(8)), id: \.self) { suggestion in
+                        Button(suggestion) {
+                            onSelect(suggestion)
+                        }
+                        .buttonStyle(.plain)
+                        .controlSize(.small)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.secondary.opacity(0.12), in: Capsule())
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
     }
 }
 

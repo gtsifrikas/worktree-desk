@@ -1,6 +1,49 @@
 import Foundation
 
 actor GitClient {
+    struct ReferenceCatalog: Sendable {
+        var localBranches: [String]
+        var references: [String]
+    }
+
+    private final class DataBuffer: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+
+        func append(_ chunk: Data) {
+            guard !chunk.isEmpty else {
+                return
+            }
+            lock.lock()
+            data.append(chunk)
+            lock.unlock()
+        }
+
+        func snapshot() -> Data {
+            lock.lock()
+            defer { lock.unlock() }
+            return data
+        }
+    }
+
+    private final class ResumeGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var resumed = false
+
+        func runOnce(_ action: () -> Void) {
+            lock.lock()
+            let shouldRun = !resumed
+            if shouldRun {
+                resumed = true
+            }
+            lock.unlock()
+
+            if shouldRun {
+                action()
+            }
+        }
+    }
+
     private struct ParsedWorktree {
         var path: String = ""
         var head: String?
@@ -88,6 +131,27 @@ actor GitClient {
         _ = try await runGit(["worktree", "prune"], in: repositoryRoot)
     }
 
+    func listReferenceCatalog(in repositoryRoot: URL) async throws -> ReferenceCatalog {
+        let refsResult = try await runGit(
+            ["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes", "refs/tags"],
+            in: repositoryRoot
+        )
+
+        let branchResult = try await runGit(
+            ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+            in: repositoryRoot
+        )
+
+        let localBranches = normalizeRefs(branchResult.stdout)
+        var references = normalizeRefs(refsResult.stdout)
+
+        if !references.contains("HEAD") {
+            references.insert("HEAD", at: 0)
+        }
+
+        return ReferenceCatalog(localBranches: localBranches, references: references)
+    }
+
     private func parseAheadBehind(from statusOutput: String) -> (ahead: Int, behind: Int, hasUpstream: Bool) {
         for line in statusOutput.split(whereSeparator: \.isNewline) {
             if line.hasPrefix("# branch.ab ") {
@@ -168,6 +232,29 @@ actor GitClient {
         }
     }
 
+    private func normalizeRefs(_ raw: String) -> [String] {
+        var seen = Set<String>()
+        var refs: [String] = []
+
+        for line in raw.split(whereSeparator: \.isNewline) {
+            let value = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else {
+                continue
+            }
+            guard !value.hasSuffix("/HEAD") else {
+                continue
+            }
+            if seen.insert(value).inserted {
+                refs.append(value)
+            }
+        }
+
+        refs.sort { lhs, rhs in
+            lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+        }
+        return refs
+    }
+
     private func runGit(_ arguments: [String], in directory: URL) async throws -> CommandResult {
         try await withCheckedThrowingContinuation { continuation in
             let process = Process()
@@ -180,26 +267,57 @@ actor GitClient {
             process.standardOutput = stdout
             process.standardError = stderr
 
-            process.terminationHandler = { terminated in
-                let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
-                let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+            let stdoutBuffer = DataBuffer()
+            let stderrBuffer = DataBuffer()
+            let resumeGate = ResumeGate()
 
-                let stdoutString = String(data: stdoutData, encoding: .utf8) ?? ""
-                let stderrString = String(data: stderrData, encoding: .utf8) ?? ""
-                let result = CommandResult(stdout: stdoutString, stderr: stderrString, exitCode: terminated.terminationStatus)
-
-                if result.exitCode != 0 {
-                    continuation.resume(throwing: GitCommandError(arguments: arguments, stderr: result.stderr, exitCode: result.exitCode))
+            stdout.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                if chunk.isEmpty {
+                    handle.readabilityHandler = nil
                     return
                 }
+                stdoutBuffer.append(chunk)
+            }
 
-                continuation.resume(returning: result)
+            stderr.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                if chunk.isEmpty {
+                    handle.readabilityHandler = nil
+                    return
+                }
+                stderrBuffer.append(chunk)
+            }
+
+            process.terminationHandler = { terminated in
+                stdout.fileHandleForReading.readabilityHandler = nil
+                stderr.fileHandleForReading.readabilityHandler = nil
+
+                stdoutBuffer.append(stdout.fileHandleForReading.readDataToEndOfFile())
+                stderrBuffer.append(stderr.fileHandleForReading.readDataToEndOfFile())
+
+                let stdoutString = String(data: stdoutBuffer.snapshot(), encoding: .utf8) ?? ""
+                let stderrString = String(data: stderrBuffer.snapshot(), encoding: .utf8) ?? ""
+                let result = CommandResult(stdout: stdoutString, stderr: stderrString, exitCode: terminated.terminationStatus)
+
+                resumeGate.runOnce {
+                    if result.exitCode != 0 {
+                        continuation.resume(throwing: GitCommandError(arguments: arguments, stderr: result.stderr, exitCode: result.exitCode))
+                        return
+                    }
+
+                    continuation.resume(returning: result)
+                }
             }
 
             do {
                 try process.run()
             } catch {
-                continuation.resume(throwing: error)
+                stdout.fileHandleForReading.readabilityHandler = nil
+                stderr.fileHandleForReading.readabilityHandler = nil
+                resumeGate.runOnce {
+                    continuation.resume(throwing: error)
+                }
             }
         }
     }

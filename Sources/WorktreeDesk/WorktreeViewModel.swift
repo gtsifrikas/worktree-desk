@@ -15,6 +15,11 @@ final class WorktreeViewModel {
 
     var showingCreateSheet = false
     var createRequest = CreateWorktreeRequest()
+    var createErrorMessage: String?
+    var createSuggestionsLoading = false
+    var isCreatingWorktree = false
+    var createBranchSuggestions: [String] = []
+    var createStartPointSuggestions: [String] = []
 
     var showingCheckoutSheet = false
     var checkoutBranchName = ""
@@ -181,16 +186,29 @@ final class WorktreeViewModel {
 
     func openCreateWorktreeSheet() {
         createRequest = CreateWorktreeRequest()
+        createErrorMessage = nil
+        isCreatingWorktree = false
+        createBranchSuggestions = []
+        createStartPointSuggestions = []
         autofillCreateDefaults()
         showingCreateSheet = true
+        Task {
+            await loadCreateSuggestionCatalog()
+        }
     }
 
     func createWorktree() async {
         guard let repository = repositoryStore.selectedRepository else {
             return
         }
+        guard !isCreatingWorktree else {
+            return
+        }
 
+        isCreatingWorktree = true
+        defer { isCreatingWorktree = false }
         do {
+            createErrorMessage = nil
             let request = createRequest
             let destinationPath = try buildDestinationPath(
                 destinationFolderPath: request.destinationFolderPath,
@@ -208,9 +226,10 @@ final class WorktreeViewModel {
 
             try? repositoryStore.addPathBookmark(for: URL(fileURLWithPath: destinationPath))
             showingCreateSheet = false
+            createErrorMessage = nil
             await refreshWorktrees()
         } catch {
-            present(error)
+            createErrorMessage = localizedMessage(for: error)
         }
     }
 
@@ -221,6 +240,28 @@ final class WorktreeViewModel {
             return "Choose a folder and enter a worktree name."
         }
         return URL(fileURLWithPath: folder).appendingPathComponent(name).standardizedFileURL.path
+    }
+
+    var canCreateWorktree: Bool {
+        let name = createRequest.worktreeName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let folder = createRequest.destinationFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !folder.isEmpty else {
+            return false
+        }
+
+        switch createRequest.mode {
+        case .existingBranch:
+            return !createRequest.branchOrReference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .newBranch:
+            return !createRequest.branchOrReference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !createRequest.startPoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .detached:
+            return !createRequest.startPoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    func clearCreateError() {
+        createErrorMessage = nil
     }
 
     func chooseCreateDestinationFolder() {
@@ -261,6 +302,30 @@ final class WorktreeViewModel {
         if createRequest.worktreeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             createRequest.worktreeName = suggestedWorktreeName()
         }
+    }
+
+    var filteredCreateBranchSuggestions: [String] {
+        autocompleteSuggestions(
+            query: createRequest.branchOrReference,
+            source: createBranchSuggestions,
+            limit: 10
+        )
+    }
+
+    var filteredCreateStartPointSuggestions: [String] {
+        autocompleteSuggestions(
+            query: createRequest.startPoint,
+            source: createStartPointSuggestions,
+            limit: 10
+        )
+    }
+
+    func applyCreateBranchSuggestion(_ suggestion: String) {
+        createRequest.branchOrReference = suggestion
+    }
+
+    func applyCreateStartPointSuggestion(_ suggestion: String) {
+        createRequest.startPoint = suggestion
     }
 
     func delete(worktree: WorktreeInfo, force: Bool) async {
@@ -568,6 +633,43 @@ final class WorktreeViewModel {
         let collapsed = joined.replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
         let trimmed = collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "-_"))
         return trimmed.isEmpty ? "worktree" : trimmed
+    }
+
+    private func loadCreateSuggestionCatalog() async {
+        guard let repository = repositoryStore.selectedRepository else {
+            return
+        }
+
+        createSuggestionsLoading = true
+        defer { createSuggestionsLoading = false }
+
+        do {
+            let catalog = try await repositoryStore.withScopedRepositoryAccess(id: repository.id) { repoURL in
+                try await gitClient.listReferenceCatalog(in: repoURL)
+            }
+
+            createBranchSuggestions = catalog.localBranches
+            createStartPointSuggestions = catalog.references
+        } catch {
+            createBranchSuggestions = []
+            createStartPointSuggestions = []
+        }
+    }
+
+    private func autocompleteSuggestions(query: String, source: [String], limit: Int) -> [String] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return []
+        }
+
+        let lowercasedQuery = trimmed.lowercased()
+
+        let prefixMatches = source.filter { $0.lowercased().hasPrefix(lowercasedQuery) }
+        let containsMatches = source.filter {
+            !$0.lowercased().hasPrefix(lowercasedQuery) && $0.lowercased().contains(lowercasedQuery)
+        }
+
+        return Array((prefixMatches + containsMatches).prefix(limit))
     }
 
     private func sortComparator(lhs: WorktreeInfo, rhs: WorktreeInfo) -> Bool {
