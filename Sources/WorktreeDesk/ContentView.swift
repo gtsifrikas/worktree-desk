@@ -543,7 +543,27 @@ private struct CreateWorktreeSheet: View {
                     }
                 }
 
-                TextField("Destination path", text: $viewModel.createRequest.destinationPath)
+                TextField("Worktree name", text: $viewModel.createRequest.worktreeName)
+
+                LabeledContent("Destination folder") {
+                    HStack(spacing: 8) {
+                        Text(viewModel.createRequest.destinationFolderPath.isEmpty ? "No folder selected" : viewModel.createRequest.destinationFolderPath)
+                            .foregroundStyle(viewModel.createRequest.destinationFolderPath.isEmpty ? .secondary : .primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        Button("Choose…") {
+                            viewModel.chooseCreateDestinationFolder()
+                        }
+                    }
+                }
+
+                LabeledContent("Will create at") {
+                    Text(viewModel.createDestinationPreview)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
 
                 if viewModel.createRequest.mode == .existingBranch {
                     TextField("Branch", text: $viewModel.createRequest.branchOrReference)
@@ -559,9 +579,22 @@ private struct CreateWorktreeSheet: View {
                 }
             }
             .formStyle(.grouped)
+            .onChange(of: viewModel.createRequest.mode) { _, _ in
+                if viewModel.createRequest.worktreeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    viewModel.autofillCreateDefaults()
+                }
+            }
+            .onChange(of: viewModel.createRequest.branchOrReference) { _, _ in
+                if viewModel.createRequest.worktreeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    viewModel.autofillCreateDefaults()
+                }
+            }
 
             HStack {
                 Spacer()
+                Button("Autofill") {
+                    viewModel.autofillCreateDefaults()
+                }
                 Button("Cancel") {
                     viewModel.showingCreateSheet = false
                 }
@@ -574,7 +607,7 @@ private struct CreateWorktreeSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 540, height: 340)
+        .frame(width: 620, height: 400)
     }
 }
 

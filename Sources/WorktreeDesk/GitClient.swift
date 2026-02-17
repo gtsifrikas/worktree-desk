@@ -54,12 +54,8 @@ actor GitClient {
         _ = try await runGit(["checkout", branch], in: worktreeURL)
     }
 
-    func createWorktree(in repositoryRoot: URL, request: CreateWorktreeRequest) async throws {
-        if request.destinationPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            throw AppError(message: "Destination path is required.")
-        }
-
-        let destination = URL(fileURLWithPath: request.destinationPath).standardizedFileURL.path
+    func createWorktree(in repositoryRoot: URL, destinationPath: String, request: CreateWorktreeRequest) async throws {
+        let destination = URL(fileURLWithPath: destinationPath).standardizedFileURL.path
         var arguments = ["worktree", "add"]
 
         switch request.mode {

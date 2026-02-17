@@ -35,6 +35,7 @@ enum ExternalEditor: String, CaseIterable, Identifiable, Codable, Sendable {
     case xcode = "Xcode"
     case claude = "Claude"
     case codex = "Codex"
+    case warp = "Warp"
     case finder = "Finder"
 
     var id: String { rawValue }
@@ -50,7 +51,8 @@ enum CreateMode: String, CaseIterable, Identifiable, Sendable {
 
 struct CreateWorktreeRequest: Sendable {
     var mode: CreateMode = .existingBranch
-    var destinationPath: String = ""
+    var worktreeName: String = ""
+    var destinationFolderPath: String = ""
     var branchOrReference: String = ""
     var startPoint: String = "HEAD"
 }

@@ -181,6 +181,7 @@ final class WorktreeViewModel {
 
     func openCreateWorktreeSheet() {
         createRequest = CreateWorktreeRequest()
+        autofillCreateDefaults()
         showingCreateSheet = true
     }
 
@@ -190,18 +191,75 @@ final class WorktreeViewModel {
         }
 
         do {
-            var request = createRequest
-            request.destinationPath = try absoluteDestinationPath(from: request.destinationPath, repositoryPath: repository.path)
+            let request = createRequest
+            let destinationPath = try buildDestinationPath(
+                destinationFolderPath: request.destinationFolderPath,
+                worktreeName: request.worktreeName
+            )
 
-            try await repositoryStore.withScopedRepositoryAccess(id: repository.id) { repoURL in
-                try await gitClient.createWorktree(in: repoURL, request: request)
+            let destinationFolderURL = URL(fileURLWithPath: request.destinationFolderPath).standardizedFileURL
+            try? repositoryStore.addPathBookmark(for: destinationFolderURL)
+
+            try await repositoryStore.withScopedPathAccess(path: destinationFolderURL.path) { _ in
+                try await repositoryStore.withScopedRepositoryAccess(id: repository.id) { repoURL in
+                    try await gitClient.createWorktree(in: repoURL, destinationPath: destinationPath, request: request)
+                }
             }
 
-            try? repositoryStore.addPathBookmark(for: URL(fileURLWithPath: request.destinationPath))
+            try? repositoryStore.addPathBookmark(for: URL(fileURLWithPath: destinationPath))
             showingCreateSheet = false
             await refreshWorktrees()
         } catch {
             present(error)
+        }
+    }
+
+    var createDestinationPreview: String {
+        let folder = createRequest.destinationFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = createRequest.worktreeName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !folder.isEmpty, !name.isEmpty else {
+            return "Choose a folder and enter a worktree name."
+        }
+        return URL(fileURLWithPath: folder).appendingPathComponent(name).standardizedFileURL.path
+    }
+
+    func chooseCreateDestinationFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Select Destination Folder"
+        panel.prompt = "Choose Folder"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+
+        if !createRequest.destinationFolderPath.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: createRequest.destinationFolderPath)
+        } else if let repository = repositoryStore.selectedRepository {
+            panel.directoryURL = URL(fileURLWithPath: repository.path).deletingLastPathComponent()
+        }
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        createRequest.destinationFolderPath = url.standardizedFileURL.path
+        do {
+            try repositoryStore.addPathBookmark(for: url)
+        } catch {
+            present(error)
+        }
+    }
+
+    func autofillCreateDefaults() {
+        if createRequest.destinationFolderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let repository = repositoryStore.selectedRepository {
+            createRequest.destinationFolderPath = URL(fileURLWithPath: repository.path)
+                .deletingLastPathComponent()
+                .standardizedFileURL
+                .path
+        }
+
+        if createRequest.worktreeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            createRequest.worktreeName = suggestedWorktreeName()
         }
     }
 
@@ -336,6 +394,15 @@ final class WorktreeViewModel {
             return
         }
 
+        if editor == .warp {
+            do {
+                try Self.openInWarp(path: url.path)
+            } catch {
+                present(error)
+            }
+            return
+        }
+
         do {
             try await Self.openInApplication(editor.rawValue, path: url.path)
         } catch {
@@ -458,18 +525,49 @@ final class WorktreeViewModel {
         return "\(action) failed for \(failures.count) worktree(s):\n\(head)\(extra)"
     }
 
-    private func absoluteDestinationPath(from input: String, repositoryPath: String) throws -> String {
-        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw AppError(message: "Destination path is required.")
+    private func buildDestinationPath(
+        destinationFolderPath: String,
+        worktreeName: String
+    ) throws -> String {
+        let folder = destinationFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !folder.isEmpty else {
+            throw AppError(message: "Destination folder is required.")
         }
 
-        if trimmed.hasPrefix("/") {
-            return URL(fileURLWithPath: trimmed).standardizedFileURL.path
+        let name = worktreeName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            throw AppError(message: "Worktree name is required.")
         }
 
-        let base = URL(fileURLWithPath: repositoryPath).deletingLastPathComponent()
-        return base.appendingPathComponent(trimmed).standardizedFileURL.path
+        return URL(fileURLWithPath: folder).appendingPathComponent(name).standardizedFileURL.path
+    }
+
+    private func suggestedWorktreeName() -> String {
+        let rawSource: String
+        switch createRequest.mode {
+        case .existingBranch, .newBranch:
+            rawSource = createRequest.branchOrReference
+        case .detached:
+            rawSource = "detached-head"
+        }
+
+        let source = rawSource.trimmingCharacters(in: .whitespacesAndNewlines)
+        if source.isEmpty {
+            return "worktree"
+        }
+        return sanitizeWorktreeName(source)
+    }
+
+    private func sanitizeWorktreeName(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let lowered = value.lowercased()
+        let pieces = lowered.unicodeScalars.map { scalar -> String in
+            allowed.contains(scalar) ? String(scalar) : "-"
+        }
+        let joined = pieces.joined()
+        let collapsed = joined.replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
+        let trimmed = collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "-_"))
+        return trimmed.isEmpty ? "worktree" : trimmed
     }
 
     private func sortComparator(lhs: WorktreeInfo, rhs: WorktreeInfo) -> Bool {
@@ -504,6 +602,26 @@ final class WorktreeViewModel {
 
     private func present(_ error: Error) {
         errorMessage = localizedMessage(for: error)
+    }
+
+    nonisolated private static func openInWarp(path: String) throws {
+        let warpBundleIDs = ["dev.warp.Warp-Stable", "dev.warp.Warp-Preview"]
+        let isWarpRunning = warpBundleIDs.contains { bundleID in
+            !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
+        }
+
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "&+=?")
+        let encodedPath = path.addingPercentEncoding(withAllowedCharacters: allowed) ?? path
+        let action = isWarpRunning ? "new_tab" : "new_window"
+
+        guard let url = URL(string: "warp://action/\(action)?path=\(encodedPath)") else {
+            throw AppError(message: "Unable to create Warp URL.")
+        }
+
+        guard NSWorkspace.shared.open(url) else {
+            throw AppError(message: "Failed to open Warp.")
+        }
     }
 
     nonisolated private static func openInApplication(_ application: String, path: String) async throws {
