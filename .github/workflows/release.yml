@@ -124,6 +124,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "CODESIGN_CERT_P12 length: ${#CODESIGN_CERT_P12}"
+          echo "CODESIGN_CERT_PASSWORD length: ${#CODESIGN_CERT_PASSWORD}"
+
           if [[ -n "${CODESIGN_IDENTITY}" && -n "${CODESIGN_CERT_P12}" && -n "${CODESIGN_CERT_PASSWORD}" ]]; then
             echo "sign_enabled=true" >> "${GITHUB_OUTPUT}"
             echo "Code signing is enabled."
@@ -149,9 +152,15 @@ jobs:
           KEYCHAIN_PASSWORD="$(uuidgen)"
           CERT_PATH="${RUNNER_TEMP}/developer_id.p12"
 
-          printf "%s" "${CODESIGN_CERT_P12}" | openssl base64 -d -A -out "${CERT_PATH}"
+          CERT_B64="$(printf "%s" "${CODESIGN_CERT_P12}" | tr -d '\r\n')"
+          if [[ -z "${CERT_B64}" ]]; then
+            echo "Certificate secret is empty after trimming line endings."
+            exit 1
+          fi
+
+          (printf "%s" "${CERT_B64}" | base64 --decode > "${CERT_PATH}") || (printf "%s" "${CERT_B64}" | base64 -D > "${CERT_PATH}")
           if [[ ! -s "${CERT_PATH}" ]]; then
-            echo "Decoded certificate is empty."
+            echo "Decoded certificate is empty (base64 length: ${#CERT_B64})."
             exit 1
           fi
 
