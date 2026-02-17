@@ -10,7 +10,11 @@ final class WorktreeViewModel {
     var worktrees: [WorktreeInfo] = []
     var isLoading = false
     var selectedWorktreePaths: Set<String> = []
-    var selectedOpenTarget: ExternalEditor = .cursor
+    var selectedOpenTarget: ExternalEditor = .cursor {
+        didSet {
+            UserDefaults.standard.set(selectedOpenTarget.rawValue, forKey: selectedOpenTargetKey)
+        }
+    }
     var errorMessage: String?
 
     var showingCreateSheet = false
@@ -27,9 +31,14 @@ final class WorktreeViewModel {
 
     private let repositoryStore: RepositoryStore
     private let gitClient = GitClient()
+    private let selectedOpenTargetKey = "worktree.selectedOpenTarget"
 
     init(repositoryStore: RepositoryStore) {
         self.repositoryStore = repositoryStore
+        if let rawValue = UserDefaults.standard.string(forKey: selectedOpenTargetKey),
+           let editor = ExternalEditor(rawValue: rawValue) {
+            selectedOpenTarget = editor
+        }
     }
 
     var repositories: [RepositoryRecord] {
