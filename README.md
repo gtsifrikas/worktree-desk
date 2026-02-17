@@ -30,6 +30,8 @@ Optional custom install path:
 ./scripts/export_app.sh "$HOME/Applications/WorktreeDesk.app"
 ```
 
+The export script also regenerates the app icon (`assets/AppIcon.icns`) automatically.
+
 ## Notes on sandboxed distribution
 - Security-scoped bookmarks are used for selected repositories.
 - Additional bookmarks can be granted for worktree folders outside the original repo path.

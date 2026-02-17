@@ -5,9 +5,12 @@ APP_NAME="WorktreeDesk"
 BUNDLE_ID="com.gtsifrikas.worktreedesk"
 VERSION="0.1.0"
 DEST_APP_PATH="${1:-/Applications/${APP_NAME}.app}"
+APP_ICON_NAME="AppIcon"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ICON_SCRIPT="$SCRIPT_DIR/build_app_icon.sh"
+ICON_ICNS_PATH="$REPO_ROOT/assets/${APP_ICON_NAME}.icns"
 
 printf "Building %s (release)...\n" "$APP_NAME"
 swift build -c release --package-path "$REPO_ROOT"
@@ -41,6 +44,15 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 cp "$BINARY_PATH" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 chmod +x "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
+if [[ -x "$ICON_SCRIPT" ]]; then
+  printf "Generating app icon...\n"
+  "$ICON_SCRIPT"
+fi
+
+if [[ -f "$ICON_ICNS_PATH" ]]; then
+  cp "$ICON_ICNS_PATH" "$APP_BUNDLE/Contents/Resources/${APP_ICON_NAME}.icns"
+fi
+
 cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -50,6 +62,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
   <string>en</string>
   <key>CFBundleExecutable</key>
   <string>${APP_NAME}</string>
+  <key>CFBundleIconFile</key>
+  <string>${APP_ICON_NAME}</string>
   <key>CFBundleIdentifier</key>
   <string>${BUNDLE_ID}</string>
   <key>CFBundleInfoDictionaryVersion</key>
