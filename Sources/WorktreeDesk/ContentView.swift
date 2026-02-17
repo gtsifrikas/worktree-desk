@@ -390,6 +390,98 @@ struct ContentView: View {
             }
             .width(min: 220, ideal: 250)
         }
+        .contextMenu(forSelectionType: String.self) { selected in
+            let paths = selected.isEmpty ? viewModel.selectedWorktreePaths : selected
+            if paths.count == 1, let path = paths.first, let worktree = worktreeForPath(path) {
+                Section("Git") {
+                    Button("Fetch", systemImage: "arrow.triangle.2.circlepath") {
+                        Task {
+                            await viewModel.fetch(worktree: worktree)
+                        }
+                    }
+                    Button("Pull", systemImage: "arrow.down.circle") {
+                        Task {
+                            await viewModel.pull(worktree: worktree)
+                        }
+                    }
+                    Button("Checkout…", systemImage: "arrow.triangle.branch") {
+                        viewModel.openCheckoutSheet(for: worktree)
+                    }
+                }
+
+                Section("Open") {
+                    Button("Open in \(viewModel.selectedOpenTarget.rawValue)") {
+                        Task {
+                            await viewModel.open(worktree: worktree, in: viewModel.selectedOpenTarget)
+                        }
+                    }
+
+                    Menu("Open In…") {
+                        ForEach(ExternalEditor.allCases) { editor in
+                            Button(editor.rawValue) {
+                                Task {
+                                    await viewModel.open(worktree: worktree, in: editor)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Section("Clipboard") {
+                    Button("Copy Path", systemImage: "doc.on.doc") {
+                        viewModel.copyPath(worktree)
+                    }
+                    Button("Copy Branch", systemImage: "point.topleft.down.curvedto.point.bottomright.up") {
+                        viewModel.copyBranch(worktree)
+                    }
+                }
+
+                Section("Advanced") {
+                    Button("Grant Folder Access…", systemImage: "folder.badge.plus") {
+                        viewModel.grantAccessForWorktree(worktree)
+                    }
+                    Button("Delete…", systemImage: "trash", role: .destructive) {
+                        worktreePendingDeletion = worktree
+                    }
+                }
+            } else if !paths.isEmpty {
+                Section("Batch") {
+                    Button("Fetch Selected") {
+                        viewModel.selectedWorktreePaths = paths
+                        Task {
+                            await viewModel.fetchSelected()
+                        }
+                    }
+                    Button("Pull Selected") {
+                        viewModel.selectedWorktreePaths = paths
+                        Task {
+                            await viewModel.pullSelected()
+                        }
+                    }
+                    Button("Open Selected in \(viewModel.selectedOpenTarget.rawValue)") {
+                        viewModel.selectedWorktreePaths = paths
+                        Task {
+                            await viewModel.openSelected(in: viewModel.selectedOpenTarget)
+                        }
+                    }
+                    Button("Copy Selected Paths") {
+                        viewModel.selectedWorktreePaths = paths
+                        viewModel.copySelectedPaths()
+                    }
+                    Button("Copy Selected Branches") {
+                        viewModel.selectedWorktreePaths = paths
+                        viewModel.copySelectedBranches()
+                    }
+                    Button("Delete Selected…", role: .destructive) {
+                        viewModel.selectedWorktreePaths = paths
+                        showingSelectionDeleteDialog = true
+                    }
+                }
+            } else {
+                Button("No Worktree Selected") {}
+                    .disabled(true)
+            }
+        }
     }
 
     private var errorBinding: Binding<Bool> {
@@ -409,6 +501,10 @@ struct ContentView: View {
             return "Delete Selected Worktree"
         }
         return "Delete \(count) Selected Worktrees"
+    }
+
+    private func worktreeForPath(_ path: String) -> WorktreeInfo? {
+        viewModel.worktrees.first(where: { $0.path == path })
     }
 }
 
